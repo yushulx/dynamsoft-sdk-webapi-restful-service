@@ -1,0 +1,5 @@
+dbr
+mrz-scanner-sdk
+document-scanner-sdk
+opencv-python
+flask
