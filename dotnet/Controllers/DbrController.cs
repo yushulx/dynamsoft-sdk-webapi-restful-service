@@ -1,11 +1,8 @@
-using Dynamsoft;
+using Dynamsoft.CVR;
+using Dynamsoft.DBR;
+using Dynamsoft.Core;
 using Microsoft.AspNetCore.Mvc;
-using System.Collections.Generic;
-using static Dynamsoft.BarcodeQRCodeReader;
-using BarcodeResult = Dynamsoft.BarcodeQRCodeReader.Result;
 using OpenCvSharp;
-using OpenCvSharp.Extensions;
-using System.Runtime.InteropServices;
 
 namespace DynamsoftRestfulService.Controllers
 {
@@ -13,11 +10,11 @@ namespace DynamsoftRestfulService.Controllers
     [ApiController]
     public class DbrController : ControllerBase
     {
-        private BarcodeQRCodeReader barcodeScanner;
+        private CaptureVisionRouter cvRouter;
 
         public DbrController()
         {
-            barcodeScanner = BarcodeQRCodeReader.Create();
+            cvRouter = new CaptureVisionRouter();
         }
 
         // POST dynamsoft/dbr/DecodeBarcode
@@ -39,17 +36,29 @@ namespace DynamsoftRestfulService.Controllers
                 using (var memoryStream = new MemoryStream())
                 {
                     await file.CopyToAsync(memoryStream);
-                    memoryStream.Position = 0;
-                    Mat mat = Mat.FromStream(memoryStream, ImreadModes.Color);
+                    byte[] imageBytes = memoryStream.ToArray();
 
-                    int length = mat.Cols * mat.Rows * mat.ElemSize();
-                    byte[] bytes = new byte[length];
-                    Marshal.Copy(mat.Data, bytes, 0, length);
-                    BarcodeResult[]? results = barcodeScanner.DecodeBuffer(bytes, mat.Cols, mat.Rows, (int)mat.Step(), BarcodeQRCodeReader.ImagePixelFormat.IPF_RGB_888);
-                    if (results == null || results.Length == 0)
+                    CapturedResult capturedResult = cvRouter.Capture(imageBytes, PresetTemplate.PT_READ_BARCODES);
+
+                    if (capturedResult.GetErrorCode() != (int)EnumErrorCode.EC_OK &&
+                        capturedResult.GetErrorCode() != (int)EnumErrorCode.EC_UNSUPPORTED_JSON_KEY_WARNING)
+                    {
+                        return Ok($"Error: {capturedResult.GetErrorString()}");
+                    }
+
+                    DecodedBarcodesResult? barcodesResult = capturedResult.GetDecodedBarcodesResult();
+                    BarcodeResultItem[]? items = barcodesResult?.GetItems();
+
+                    if (items == null || items.Length == 0)
                     {
                         return Ok("No barcode found");
                     }
+
+                    var results = items.Select(item => new
+                    {
+                        text = item.GetText(),
+                        format = item.GetFormatString()
+                    }).ToArray();
 
                     return Ok(results);
                 }

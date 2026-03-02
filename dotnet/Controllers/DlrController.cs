@@ -1,11 +1,8 @@
+using Dynamsoft.CVR;
+using Dynamsoft.DLR;
+using Dynamsoft.DCP;
+using Dynamsoft.Core;
 using Microsoft.AspNetCore.Mvc;
-using System.Collections.Generic;
-using Dynamsoft;
-using static Dynamsoft.MrzScanner;
-using Result = Dynamsoft.MrzScanner.Result;
-using OpenCvSharp;
-using OpenCvSharp.Extensions;
-using System.Runtime.InteropServices;
 
 namespace DynamsoftRestfulService.Controllers
 {
@@ -13,12 +10,11 @@ namespace DynamsoftRestfulService.Controllers
     [ApiController]
     public class DlrController : ControllerBase
     {
-        private MrzScanner mrzScanner;
+        private CaptureVisionRouter cvRouter;
 
         public DlrController()
         {
-            mrzScanner = MrzScanner.Create();
-            mrzScanner.LoadModel();
+            cvRouter = new CaptureVisionRouter();
         }
 
         // POST dynamsoft/dlr/DetectMrz
@@ -40,28 +36,48 @@ namespace DynamsoftRestfulService.Controllers
                 using (var memoryStream = new MemoryStream())
                 {
                     await file.CopyToAsync(memoryStream);
-                    memoryStream.Position = 0;
-                    Mat mat = Mat.FromStream(memoryStream, ImreadModes.Color);
+                    byte[] imageBytes = memoryStream.ToArray();
 
-                    int length = mat.Cols * mat.Rows * mat.ElemSize();
-                    byte[] bytes = new byte[length];
-                    Marshal.Copy(mat.Data, bytes, 0, length);
-                    Result[]? results = mrzScanner.DetectBuffer(bytes, mat.Cols, mat.Rows, (int)mat.Step(), MrzScanner.ImagePixelFormat.IPF_RGB_888);
-                    if (results == null || results.Length == 0)
+                    CapturedResult capturedResult = cvRouter.Capture(imageBytes, "ReadPassportAndId");
+
+                    if (capturedResult.GetErrorCode() != (int)EnumErrorCode.EC_OK &&
+                        capturedResult.GetErrorCode() != (int)EnumErrorCode.EC_UNSUPPORTED_JSON_KEY_WARNING)
+                    {
+                        return Ok($"Error: {capturedResult.GetErrorString()}");
+                    }
+
+                    ParsedResult? parsedResult = capturedResult.GetParsedResult();
+                    ParsedResultItem[]? items = parsedResult?.GetItems();
+
+                    if (items == null || items.Length == 0)
                     {
                         return Ok("No MRZ found");
                     }
 
-                    string[] lines = new string[results.Length];
-                    var index = 0;
-                    foreach (Result result in results)
+                    var mrzResults = items.Select(item =>
                     {
-                        lines[index++] = result.Text;
-                    }
+                        string docType = item.GetCodeType();
+                        string? docId = docType == "MRTD_TD3_PASSPORT" ?
+                            item.GetFieldValue("passportNumber") : item.GetFieldValue("documentNumber");
 
-                    MrzResult info = MrzParser.Parse(lines);
+                        return new
+                        {
+                            documentType = docType,
+                            documentId = docId,
+                            surname = item.GetFieldValue("primaryIdentifier"),
+                            givenName = item.GetFieldValue("secondaryIdentifier"),
+                            nationality = item.GetFieldValue("nationality"),
+                            issuingCountry = item.GetFieldValue("issuingState"),
+                            dateOfBirth = item.GetFieldValue("dateOfBirth"),
+                            dateOfExpiry = item.GetFieldValue("dateOfExpiry"),
+                            sex = item.GetFieldValue("sex"),
+                            line1 = item.GetFieldValue("line1"),
+                            line2 = item.GetFieldValue("line2"),
+                            line3 = item.GetFieldValue("line3")
+                        };
+                    }).ToArray();
 
-                    return Ok(info.ToJson());
+                    return Ok(mrzResults);
                 }
             }
             else

@@ -1,11 +1,8 @@
+using Dynamsoft.CVR;
+using Dynamsoft.DDN;
+using Dynamsoft.Core;
 using Microsoft.AspNetCore.Mvc;
-using System.Collections.Generic;
-using Dynamsoft;
 using OpenCvSharp;
-using OpenCvSharp.Extensions;
-using static Dynamsoft.DocumentScanner;
-using DocResult = Dynamsoft.DocumentScanner.Result;
-using System.Runtime.InteropServices;
 
 namespace DynamsoftRestfulService.Controllers
 {
@@ -13,12 +10,11 @@ namespace DynamsoftRestfulService.Controllers
     [ApiController]
     public class DdnController : ControllerBase
     {
-        private DocumentScanner documentScanner;
+        private CaptureVisionRouter cvRouter;
 
         public DdnController()
         {
-            documentScanner = DocumentScanner.Create();
-            documentScanner.SetParameters(DocumentScanner.Templates.color);
+            cvRouter = new CaptureVisionRouter();
         }
 
         // POST dynamsoft/ddn/rectifyDocument
@@ -40,44 +36,48 @@ namespace DynamsoftRestfulService.Controllers
                 using (var memoryStream = new MemoryStream())
                 {
                     await file.CopyToAsync(memoryStream);
-                    memoryStream.Position = 0;
-                    Mat mat = Mat.FromStream(memoryStream, ImreadModes.Color);
+                    byte[] imageBytes = memoryStream.ToArray();
 
-                    int length = mat.Cols * mat.Rows * mat.ElemSize();
-                    byte[] bytes = new byte[length];
-                    Marshal.Copy(mat.Data, bytes, 0, length);
-                    DocResult[]? results = documentScanner.DetectBuffer(bytes, mat.Cols, mat.Rows, (int)mat.Step(), DocumentScanner.ImagePixelFormat.IPF_RGB_888);
+                    CapturedResult capturedResult = cvRouter.Capture(imageBytes, PresetTemplate.PT_DETECT_AND_NORMALIZE_DOCUMENT);
 
-                    if (results != null)
+                    if (capturedResult.GetErrorCode() != (int)EnumErrorCode.EC_OK &&
+                        capturedResult.GetErrorCode() != (int)EnumErrorCode.EC_UNSUPPORTED_JSON_KEY_WARNING)
                     {
-                        DocResult result = results[0];
+                        return Ok($"Error: {capturedResult.GetErrorString()}");
+                    }
 
-                        NormalizedImage image = documentScanner.NormalizeBuffer(bytes, mat.Cols, mat.Rows, (int)mat.Step(), DocumentScanner.ImagePixelFormat.IPF_RGB_888, result.Points);
-                        if (image != null && image.Data != null)
+                    ProcessedDocumentResult? docResult = capturedResult.GetProcessedDocumentResult();
+                    EnhancedImageResultItem[]? enhancedItems = docResult?.GetEnhancedImageResultItems();
+
+                    if (enhancedItems != null && enhancedItems.Length > 0)
+                    {
+                        ImageData? imageData = enhancedItems[0].GetImageData();
+                        if (imageData != null)
                         {
+                            byte[] rawBytes = imageData.GetBytes();
+                            int width = imageData.GetWidth();
+                            int height = imageData.GetHeight();
+                            int stride = imageData.GetStride();
+                            EnumImagePixelFormat format = imageData.GetImagePixelFormat();
+
                             Mat newMat;
-                            if (image.Stride < image.Width)
+                            if (format == EnumImagePixelFormat.IPF_GRAYSCALED)
                             {
-                                // binary
-                                byte[] data = image.Binary2Grayscale();
-                                newMat = new Mat(image.Height, image.Width, MatType.CV_8UC1, data);
+                                newMat = new Mat(height, width, MatType.CV_8UC1, rawBytes);
                             }
-                            else if (image.Stride >= image.Width * 3)
+                            else if (format == EnumImagePixelFormat.IPF_BINARY || stride < width)
                             {
-                                // color
-                                newMat = new Mat(image.Height, image.Width, MatType.CV_8UC3, image.Data);
+                                // binary – expand to grayscale
+                                newMat = new Mat(height, width, MatType.CV_8UC1, rawBytes);
                             }
                             else
                             {
-                                // grayscale
-                                newMat = new Mat(image.Height, image.Stride, MatType.CV_8UC1, image.Data);
+                                newMat = new Mat(height, width, MatType.CV_8UC3, rawBytes);
                             }
 
-                            byte[] buffer;
-                            Cv2.ImEncode(".jpg", newMat, out buffer);
+                            Cv2.ImEncode(".jpg", newMat, out byte[] buffer);
                             return File(buffer, "application/octet-stream");
                         }
-
                     }
                 }
 

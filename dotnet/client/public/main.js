@@ -235,7 +235,7 @@ async function decodeBarcode() {
         let index = 0;
         data.forEach(element => {
             content += '\n';
-            content += index + ". text: " + element['text'] + ", format: " + element['format1'];
+            content += index + ". text: " + element['text'] + ", format: " + element['format'];
             index += 1;
         });
         document.getElementById('barcode-result').innerHTML = content;

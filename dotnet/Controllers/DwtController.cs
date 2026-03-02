@@ -1,7 +1,8 @@
 using Microsoft.AspNetCore.Mvc;
 using System.Collections.Generic;
 using Twain.Wia.Sane.Scanner;
-using System.Text.Json;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 
 namespace DynamsoftRestfulService.Controllers
 {
@@ -15,10 +16,12 @@ namespace DynamsoftRestfulService.Controllers
         // GET dynamsoft/dwt/GetDevices
         [HttpGet]
         [Route("GetDevices")]
-        public async Task<ActionResult<Dictionary<string, object>>> GetDevices()
+        public async Task<ActionResult> GetDevices()
         {
-            var scanners = await scannerController.GetDevices(host);
-            if (scanners.Count == 0)
+            // v2.x: GetDevices returns a JSON string instead of a List<>
+            string scannerJson = await scannerController.GetDevices(host);
+            var scanners = JsonConvert.DeserializeObject<List<Dictionary<string, object>>>(scannerJson);
+            if (scanners == null || scanners.Count == 0)
             {
                 return Ok("No devices found");
             }
@@ -38,12 +41,27 @@ namespace DynamsoftRestfulService.Controllers
                 {
                     var json = await reader.ReadToEndAsync();
 
-                    Dictionary<string, object>? parameters = JsonSerializer.Deserialize<Dictionary<string, object>>(json);
+                    // Use Newtonsoft.Json to handle nested dictionaries correctly
+                    var parameters = JsonConvert.DeserializeObject<Dictionary<string, object>>(json);
                     if (parameters == null) return BadRequest("No content found");
 
-                    parameters["license"] = LicenseManager.dwt;
-                    string jobId = await scannerController.ScanDocument(host, parameters);
+                    // Convert JObjects/JArrays to native Dictionary/List to ensure compatibility with the SDK
+                    parameters = (Dictionary<string, object>)ToNative(JObject.FromObject(parameters));
 
+                    parameters["license"] = LicenseManager.licenseKey;
+                    parameters["autoRun"] = true;
+
+                    // v2.x: CreateJob replaces ScanDocument; returns a JSON string with "jobuid"
+                    string jobJson = await scannerController.CreateJob(host, parameters);
+
+                    var jobObj = JsonConvert.DeserializeObject<Dictionary<string, object>>(jobJson);
+                    
+                    if (jobObj == null || !jobObj.ContainsKey("jobuid"))
+                    {
+                        return BadRequest("Failed to create scan job: " + jobJson);
+                    }
+
+                    string jobId = jobObj["jobuid"]?.ToString() ?? "";
                     return Ok(jobId);
                 }
             }
@@ -53,14 +71,44 @@ namespace DynamsoftRestfulService.Controllers
             }
         }
 
+        private object ToNative(JToken token)
+        {
+            if (token is JObject obj)
+            {
+                var dict = new Dictionary<string, object>();
+                foreach (var prop in obj)
+                {
+                    dict[prop.Key] = ToNative(prop.Value);
+                }
+                return dict;
+            }
+            else if (token is JArray arr)
+            {
+                var list = new List<object>();
+                foreach (var item in arr)
+                {
+                    list.Add(ToNative(item));
+                }
+                return list;
+            }
+            else if (token is JValue val)
+            {
+                return val.Value;
+            }
+            return token.ToString();
+        }
+
+
         // GET dynamsoft/dwt/GetImageStream/jobId
         [HttpGet]
         [Route("GetImageStream/{jobId}")]
-        public async Task<ActionResult<Dictionary<string, object>>> GetImageStream(string jobId)
+        public async Task<IActionResult> GetImageStream(string jobId)
         {
             byte[] bytes = await scannerController.GetImageStream(host, jobId);
-            if (bytes.Length == 0)
+            if (bytes == null || bytes.Length == 0)
             {
+                // If no more images, try to delete the job to clean up
+                await scannerController.DeleteJob(host, jobId);
                 return Ok("No image found");
             }
             else
