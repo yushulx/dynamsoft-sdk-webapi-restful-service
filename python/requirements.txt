@@ -1,5 +1,4 @@
-dbr
-mrz-scanner-sdk
-document-scanner-sdk
+dynamsoft-capture-vision-bundle>=2.0.20
 opencv-python
 flask
+numpy
