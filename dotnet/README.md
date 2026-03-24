@@ -70,3 +70,6 @@ The RESTful service provides endpoints for each of the supported Dynamsoft produ
 | POST   | `/dynamsoft/dbr/DecodeBarcode` | Image file | Barcode results | Decode barcodes using the Dynamsoft Barcode Reader. |
 | POST   | `/dynamsoft/ddn/rectifyDocument` | Image file | Rectified document image | Rectify a document with Dynamsoft Document Normalizer. |
 | POST   | `/dynamsoft/dlr/DetectMrz` | Image file | MRZ results | Detect MRZ from an image with Dynamsoft Label Recognizer. |
+
+## Blog
+[Building a .NET RESTful Service with Dynamsoft's Document, Barcode, and MRZ SDKs](https://www.dynamsoft.com/codepool/dotnet-restful-service-document-barcode-mrz.html)
