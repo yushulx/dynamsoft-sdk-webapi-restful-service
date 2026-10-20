@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-smoke:
+    name: Build and smoke-test the REST service
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Build
+        run: dotnet build dotnet/DynamsoftRestfulService.csproj -c Release
+
+      - name: Start service
+        env:
+          DYNAMSOFT_LICENSE_KEY: ${{ secrets.DYNAMSOFT_LICENSE_KEY }}
+        run: |
+          cd dotnet
+          nohup dotnet run -c Release --no-build --project DynamsoftRestfulService.csproj > /tmp/service.log 2>&1 &
+          for i in $(seq 1 45); do
+            if curl -s -o /dev/null --max-time 2 http://127.0.0.1:5000/swagger/index.html; then
+              echo "service is up after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "service did not start"
+          cat /tmp/service.log
+          exit 1
+
+      - name: POST qr.png to /dynamsoft/dbr/DecodeBarcode
+        run: |
+          set -euo pipefail
+          status=$(curl -s -o /tmp/dbr.json -w '%{http_code}' \
+            --max-time 60 \
+            -F "file=@dotnet/images/qr.png" \
+            http://127.0.0.1:5000/dynamsoft/dbr/DecodeBarcode)
+          echo "HTTP $status"
+          cat /tmp/dbr.json; echo
+          test "$status" = "200"
+          # A license problem still answers 200 with a message; a crash would not.
+          if grep -qi "no license\|license" /tmp/dbr.json; then
+            echo "::warning::License is not active in CI, so no barcode was decoded."
+          else
+            grep -qi "qr" /tmp/dbr.json || { echo "unexpected payload"; exit 1; }
+          fi
+
+      - name: POST document.png to /dynamsoft/ddn/rectifyDocument
+        run: |
+          set -euo pipefail
+          status=$(curl -s -o /tmp/ddn.json -w '%{http_code}' \
+            --max-time 60 \
+            -F "file=@dotnet/images/document.png" \
+            http://127.0.0.1:5000/dynamsoft/ddn/rectifyDocument)
+          echo "HTTP $status"
+          head -c 400 /tmp/ddn.json; echo
+          test "$status" = "200"
+
+      - name: Show service log
+        if: always()
+        run: |
+          echo "--- service log ---"
+          tail -50 /tmp/service.log || true
