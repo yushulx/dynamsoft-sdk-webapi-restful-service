@@ -7,7 +7,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Dynamsoft.DotNet.CaptureVision.Bundle" Version="3.4.1000" />
+    <PackageReference Include="Dynamsoft.DotNet.CaptureVision.Bundle" Version="3.6.4000" />
     <PackageReference Include="Microsoft.AspNetCore.Cors" Version="2.2.0" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="7.0.11" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.5.0" />
